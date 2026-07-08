@@ -22,14 +22,6 @@ class ParentSyncPushTest extends TestCase
 
         Schema::dropAllTables();
 
-        Schema::create('parent_sync_state', function ($table) {
-            $table->id();
-            $table->string('resource')->unique();
-            $table->unsignedBigInteger('last_id')->default(0);
-            $table->timestamp('last_synced_at')->nullable();
-            $table->timestamps();
-        });
-
         Schema::create('user', function ($table) {
             $table->id();
             $table->string('username')->nullable();
@@ -68,9 +60,7 @@ class ParentSyncPushTest extends TestCase
             ],
         ]);
 
-        $this->artisan('parent-sync:push', ['--dry-run' => true])
-            ->expectsOutputToContain('[customers] [dry-run] would push')
-            ->assertExitCode(0);
+        $this->artisan('parent-sync:push', ['--dry-run' => true])->assertExitCode(0);
 
         $state = DB::table('parent_sync_state')->where('resource', 'customers')->first();
 

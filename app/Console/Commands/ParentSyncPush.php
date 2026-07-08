@@ -57,6 +57,16 @@ class ParentSyncPush extends Command
             return;
         }
 
+        if (!Schema::hasTable('parent_sync_state')) {
+            Schema::create('parent_sync_state', function ($table) {
+                $table->id();
+                $table->string('resource')->unique();
+                $table->unsignedBigInteger('last_id')->default(0);
+                $table->timestamp('last_synced_at')->nullable();
+                $table->timestamps();
+            });
+        }
+
         $state = DB::table('parent_sync_state')->where('resource', $resource)->first();
         $lastId = (int) ($state->last_id ?? 0);
 
