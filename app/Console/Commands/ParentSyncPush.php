@@ -58,7 +58,17 @@ class ParentSyncPush extends Command
         }
 
         $state = DB::table('parent_sync_state')->where('resource', $resource)->first();
-        $lastId = $state->last_id ?? 0;
+        $lastId = (int) ($state->last_id ?? 0);
+
+        if (!$state) {
+            DB::table('parent_sync_state')->insert([
+                'resource' => $resource,
+                'last_id' => 0,
+                'last_synced_at' => null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
 
         $rows = DB::table($table)
             ->where($pk, '>', $lastId)

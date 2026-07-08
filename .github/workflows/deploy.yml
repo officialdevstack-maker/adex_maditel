@@ -40,11 +40,9 @@ jobs:
       - name: Deploy Backend
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: ftp.maditelecoms.com
-          username: stix@maditelecoms.com
-          password: "{MxQfZ9PJWds]Q9r"
-          port: 21
-          timeout: 190000000
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
           server-dir: /public_html/
           local-dir: ./ # deploy everything
           exclude: |
