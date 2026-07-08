@@ -40,9 +40,9 @@ jobs:
       - name: Deploy Backend
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
+          server: ftp.maditelecoms.com
+          username: stix@maditelecoms.com
+          password: n%BdcNTd,UIgknaP
           server-dir: /public_html/
           local-dir: ./ # deploy everything
           exclude: |
