@@ -1,0 +1,17 @@
+POST /api/paymentpoint/calling/comher/secure/techboy/7839 HTTP/1.1
+Accept-Encoding:        gzip, br
+Cdn-Loop:               cloudflare; loops=1
+Cf-Connecting-Ip:       162.246.253.48
+Cf-Ipcountry:           US
+Cf-Ray:                 a15f9984ff877619-ORD
+Cf-Visitor:             {"scheme":"https"}
+Content-Length:         618
+Content-Type:           application/json
+Host:                   maditelecoms.com
+Paymentpoint-Signature: 3f9f0db9e956d8c4eaff48b98bb56bc978c14dcfadf0ae720183ce004f020054
+User-Agent:             GuzzleHttp/7
+X-Forwarded-For:        162.246.253.48,162.246.253.4
+X-Forwarded-Proto:      https
+X-Https:                on
+
+{"notification_status":"payment_successful","transaction_id":"22d04c2271dd8282358c8d560485d25cd583dfa9","amount_paid":400,"settlement_amount":398,"settlement_fee":2,"transaction_status":"success","sender":{"name":"OLADELE OYETUNDE OLANIYI","account_number":"7017844031","bank":"OPay"},"receiver":{"name":"MadiTel-qwe(Paymentpoint)","account_number":"6641248408","bank":"PalmPay"},"customer":{"name":"qwest","email":"oladeleofficial@gmail.com","phone":null,"customer_id":"95df989e56669c13494997bbd2d1b3d3564ac5a3"},"description":"Your payment has been successfully processed.","timestamp":"2026-07-04T16:45:19.423179Z"}

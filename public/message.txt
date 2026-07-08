@@ -1,0 +1,1 @@
+{"status":false,"code":424,"data":{"msg":"You can't purchase Airtel VTU via wallet base at the moment. Please try again later","ref":"AIRTIME_6a48c8d436a48"}}
