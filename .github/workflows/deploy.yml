@@ -42,7 +42,7 @@ jobs:
         with:
           server: ftp.maditelecoms.com
           username: stix@maditelecoms.com
-          password: n%BdcNTd,UIgknaP
+          password: "{MxQfZ9PJWds]Q9r"
           server-dir: /public_html/
           local-dir: ./ # deploy everything
           exclude: |
