@@ -44,7 +44,7 @@ jobs:
           username: stix@maditelecoms.com
           password: "{MxQfZ9PJWds]Q9r"
           port: 21
-          timeout: 300000
+          timeout: 190000
           server-dir: /public_html/
           local-dir: ./ # deploy everything
           exclude: |
