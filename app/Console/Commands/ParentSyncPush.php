@@ -93,6 +93,14 @@ class ParentSyncPush extends Command
             return;
         }
 
+        // A dry run "succeeds" without the parent ever seeing the batch —
+        // advancing the cursor here would permanently mark these rows as
+        // synced and they'd be skipped forever once dry-run is turned off.
+        if (config('parent_sync.dry_run')) {
+            $this->info("[{$resource}] [dry-run] would push " . count($records) . " record(s) (ids {$firstId}–{$lastRowId}); cursor NOT advanced.");
+            return;
+        }
+
         DB::table('parent_sync_state')->updateOrInsert(
             ['resource' => $resource],
             ['last_id' => $lastRowId, 'last_synced_at' => now(), 'updated_at' => now(), 'created_at' => now()]
