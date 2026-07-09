@@ -40,11 +40,20 @@ jobs:
       - name: Deploy Backend
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
+          # IMPORTANT: FTP_SERVER must be the DIRECT cPanel host, e.g.
+          # server345.web-hosting.com (or the account's shared IP from cPanel
+          # → Server Information). Do NOT use app.maditelecoms.com — that
+          # domain is proxied through Cloudflare, which does not carry FTP
+          # (port 21), so the connection just times out on a Cloudflare IP
+          # (172.67.x.x / 104.21.x.x). See the ETIMEDOUT :21 deploy failure.
           server: ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
+          port: 21
           server-dir: /public_html/
           local-dir: ./ # deploy everything
           exclude: |
             **/node_modules/**
             **/.git*
+            # Never ship a CI-built .env over the server's real one.
+            **/.env
