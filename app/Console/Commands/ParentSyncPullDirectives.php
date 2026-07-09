@@ -7,6 +7,7 @@ use App\Services\ParentSync\SyncClient;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Phase 2: fetches pending directives and dispatches each to a per-type
@@ -106,7 +107,16 @@ class ParentSyncPullDirectives extends Command
             throw new \RuntimeException('redirect_user payload missing external_id or target_url');
         }
 
-        $user = User::find($externalId);
+        // external_id can be the local numeric id or a stable string key
+        // (e.g. username). Try numeric id first, then fall back to
+        // username lookup.
+        $user = null;
+        if (is_numeric($externalId)) {
+            $user = User::find((int) $externalId);
+        }
+        if (!$user) {
+            $user = User::where('username', (string) $externalId)->first();
+        }
         if (!$user) {
             // Permanent condition — retrying won't conjure the user. Ack it
             // (by returning normally) and leave the trail in the log.
@@ -114,6 +124,21 @@ class ParentSyncPullDirectives extends Command
                 'external_id' => $externalId,
             ]);
             return;
+        }
+
+        // The redirect columns come from
+        // 2026_07_08_120000_add_parent_migration_fields_to_user_table. If that
+        // migration hasn't run on this child, the UPDATE below throws a raw
+        // "unknown column" error that reads like a mystery in the log and
+        // leaves the directive stuck Pending forever. Fail with a clear,
+        // actionable message instead (still left pending, so it applies as
+        // soon as the migration is run).
+        foreach (['parent_redirect_url', 'migrated_to_parent_at'] as $column) {
+            if (!Schema::hasColumn('user', $column)) {
+                throw new \RuntimeException(
+                    "user.{$column} column is missing — run `php artisan migrate` on this child so redirect_user directives can apply."
+                );
+            }
         }
 
         DB::table('user')->where('id', $user->id)->update([

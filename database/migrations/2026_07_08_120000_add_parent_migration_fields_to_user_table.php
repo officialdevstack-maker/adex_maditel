@@ -17,9 +17,17 @@ class AddParentMigrationFieldsToUserTable extends Migration
         // ParentSyncPullDirectives) — a non-null migrated_to_parent_at means
         // this customer now has a real account on the parent platform and
         // the frontend should steer them to parent_redirect_url.
+        //
+        // Guarded so it re-runs safely on a child DB where one/both columns
+        // were already added — otherwise a second `php artisan migrate`
+        // aborts on "column already exists".
         Schema::table('user', function (Blueprint $table) {
-            $table->string('parent_redirect_url')->nullable();
-            $table->timestamp('migrated_to_parent_at')->nullable();
+            if (!Schema::hasColumn('user', 'parent_redirect_url')) {
+                $table->string('parent_redirect_url')->nullable();
+            }
+            if (!Schema::hasColumn('user', 'migrated_to_parent_at')) {
+                $table->timestamp('migrated_to_parent_at')->nullable();
+            }
         });
     }
 
