@@ -46,10 +46,11 @@ jobs:
           # domain is proxied through Cloudflare, which does not carry FTP
           # (port 21), so the connection just times out on a Cloudflare IP
           # (172.67.x.x / 104.21.x.x). See the ETIMEDOUT :21 deploy failure.
-          server: "server345.web-hosting.com"
-          username: "maditel@maditelecoms.com"
-          password: "BbEj7+rJBZ!?;V{f"
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
           port: 21
+          timeout: 300000
           server-dir: /public_html/
           local-dir: ./ # deploy everything
           exclude: |
