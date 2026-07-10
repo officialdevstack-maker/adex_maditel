@@ -99,10 +99,24 @@ class SyncClient
             // which never matches sign(''), 401-ing every ack. withBody('')
             // pins the sent bytes to exactly what was signed (same fix
             // pushBatch already relies on).
-            return $this->signedRequest()
+            $response = $this->signedRequest()
                 ->withBody('', 'application/json')
-                ->post($url)
-                ->successful();
+                ->post($url);
+
+            if ($response->successful()) {
+                return true;
+            }
+
+            // Surface WHY the parent rejected the ack. Without this the caller
+            // only logs "handled but ack failed" with no status, leaving a 401
+            // (bad signature/unknown instance), a 404 (directive not found), and
+            // a 5xx/parent-down all indistinguishable. Mirrors pushBatch.
+            Log::channel('parent-sync')->warning('Ack rejected by parent', [
+                'directive_id' => $id,
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+            return false;
         } catch (\Throwable $e) {
             Log::channel('parent-sync')->error('Ack directive error', ['error' => $e->getMessage(), 'directive_id' => $id]);
             return false;
