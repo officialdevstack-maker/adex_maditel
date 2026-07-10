@@ -103,7 +103,7 @@ class SyncClient
                 ->withBody('', 'application/json')
                 ->post($url);
 
-            if ($response->successful()) {
+            if ($response->successful() || $response->status() === 404) {
                 return true;
             }
 
