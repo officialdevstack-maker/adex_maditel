@@ -92,7 +92,17 @@ class SyncClient
         $url = rtrim($config['parent_base_url'], '/') . '/api/child/' . $config['child_slug'] . "/directives/{$id}/ack";
 
         try {
-            return $this->signedRequest()->post($url)->successful();
+            // Send an EXPLICIT empty body. signedRequest() signs over '' (a
+            // bodyless POST), but a plain ->post($url) lets the JSON client
+            // encode the empty payload to "[]" and send that as the body — the
+            // parent then verifies the signature against getContent() = "[]",
+            // which never matches sign(''), 401-ing every ack. withBody('')
+            // pins the sent bytes to exactly what was signed (same fix
+            // pushBatch already relies on).
+            return $this->signedRequest()
+                ->withBody('', 'application/json')
+                ->post($url)
+                ->successful();
         } catch (\Throwable $e) {
             Log::channel('parent-sync')->error('Ack directive error', ['error' => $e->getMessage(), 'directive_id' => $id]);
             return false;
