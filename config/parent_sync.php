@@ -28,8 +28,14 @@ return [
     'child_slug' => env('PARENT_SYNC_CHILD_SLUG'),
     'shared_secret' => env('PARENT_SYNC_SECRET'),
 
-    'batch_size' => env('PARENT_SYNC_BATCH_SIZE', 200),
-    'http_timeout' => env('PARENT_SYNC_HTTP_TIMEOUT', 15),
+    // Smaller batches + a longer timeout: the parent ingests a whole batch in
+    // one DB transaction and must finish inside http_timeout, or the child
+    // times out, ChildSyncEvent is never written, and the SAME event_id
+    // retries forever without progress. 200 records in 15s is tight on shared
+    // hosting; 50 records in 30s completes comfortably. Override per-env if the
+    // parent is fast.
+    'batch_size' => env('PARENT_SYNC_BATCH_SIZE', 50),
+    'http_timeout' => env('PARENT_SYNC_HTTP_TIMEOUT', 30),
 
     'resources' => [
         'customers' => [
