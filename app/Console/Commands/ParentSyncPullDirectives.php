@@ -71,7 +71,8 @@ class ParentSyncPullDirectives extends Command
 
         switch ($directive['type']) {
             case 'redirect_user':
-                $this->handleRedirectUser($payload);
+            case 'redirect_all_users':
+                $this->handleRedirectAllUsers($payload);
                 break;
 
             case 'message':
@@ -94,56 +95,36 @@ class ParentSyncPullDirectives extends Command
     }
 
     /**
-     * The parent has promoted this customer to a real parent account:
-     * stamp the local row so the frontend (via the login response) tells
-     * them their account has moved.
+     * Apply a redirect instruction for either a single user or every local
+     * user, depending on the payload. The child stores the target URL so the
+     * frontend can prompt a move to the parent app on the next login.
      */
-    protected function handleRedirectUser(array $payload): void
+    protected function handleRedirectAllUsers(array $payload): void
     {
-        $externalId = $payload['external_id'] ?? null;
         $targetUrl = $payload['target_url'] ?? null;
+        $enabled = (bool) ($payload['enabled'] ?? true);
 
-        if (!$externalId || !$targetUrl) {
-            throw new \RuntimeException('redirect_user payload missing external_id or target_url');
-        }
-
-        // external_id can be the local numeric id or a stable string key
-        // (e.g. username). Try numeric id first, then fall back to
-        // username lookup.
-        $user = null;
-        if (is_numeric($externalId)) {
-            $user = User::find((int) $externalId);
-        }
-        if (!$user) {
-            $user = User::where('username', (string) $externalId)->first();
-        }
-        if (!$user) {
-            // Permanent condition — retrying won't conjure the user. Ack it
-            // (by returning normally) and leave the trail in the log.
-            Log::channel('parent-sync')->warning('redirect_user: no local user for external_id', [
-                'external_id' => $externalId,
-            ]);
-            return;
+        if (!$targetUrl) {
+            throw new \RuntimeException('redirect directive payload missing target_url');
         }
 
-        // The redirect columns come from
-        // 2026_07_08_120000_add_parent_migration_fields_to_user_table. If that
-        // migration hasn't run on this child, the UPDATE below throws a raw
-        // "unknown column" error that reads like a mystery in the log and
-        // leaves the directive stuck Pending forever. Fail with a clear,
-        // actionable message instead (still left pending, so it applies as
-        // soon as the migration is run).
         foreach (['parent_redirect_url', 'migrated_to_parent_at'] as $column) {
             if (!Schema::hasColumn('user', $column)) {
                 throw new \RuntimeException(
-                    "user.{$column} column is missing — run `php artisan migrate` on this child so redirect_user directives can apply."
+                    "user.{$column} column is missing — run `php artisan migrate` on this child so redirect directives can apply."
                 );
             }
         }
 
-        DB::table('user')->where('id', $user->id)->update([
-            'parent_redirect_url' => $targetUrl,
-            'migrated_to_parent_at' => now(),
+        $query = DB::table('user');
+
+        if (!$enabled) {
+            $query->whereNotNull('parent_redirect_url');
+        }
+
+        $query->update([
+            'parent_redirect_url' => $enabled ? $targetUrl : null,
+            'migrated_to_parent_at' => $enabled ? now() : null,
         ]);
     }
 }
