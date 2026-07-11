@@ -119,9 +119,15 @@ class ParentSyncPullDirectives extends Command
                 return ['result' => 'executed', 'note' => null];
 
             case 'retry_transaction':
-                // Retrying is service-specific in this app (airtime/data/bill
-                // each have their own resend path) — no safe generic hook yet.
-                return ['result' => 'skipped', 'note' => 'retry_transaction is not supported by this child version'];
+                $transid = $payload['external_id'] ?? null;
+                if (!$transid) {
+                    return ['result' => 'failed', 'note' => 'retry_transaction payload missing external_id'];
+                }
+                // Data purchases only — the sole transaction resource synced
+                // to the parent. See TransactionRetryService for the safety
+                // rules (stuck txns only, same transid, refund on hard fail).
+                return app(\App\Services\ParentSync\TransactionRetryService::class)
+                    ->retry((string) $transid);
 
             default:
                 Log::channel('parent-sync')->warning('Unknown directive type — acked as skipped', [
@@ -265,23 +271,30 @@ class ParentSyncPullDirectives extends Command
             return ['result' => 'failed', 'note' => "web_api.{$column} column does not exist on this child"];
         }
 
-        $update = [$column => rtrim($websiteUrl, '/')];
+        // Single-row table, same convention as `settings`.
+        DB::table('web_api')->update([$column => rtrim($websiteUrl, '/')]);
         $note = "web_api.{$column} updated";
 
-        // Optional per-slot username — only some child schemas carry it.
-        $username = $payload['username'] ?? null;
-        if ($username) {
-            $usernameColumn = "adex_username{$slot}";
-            if (Schema::hasColumn('web_api', $usernameColumn)) {
-                $update[$usernameColumn] = $username;
-                $note .= ", {$usernameColumn} updated";
-            } else {
-                $note .= "; username ignored (no {$usernameColumn} column)";
+        // Slot credentials live in adex_api.adex{slot}_username/_password —
+        // that's what DataSend/AirtimeSend actually read when building the
+        // Basic auth header. Required when tunneling the slot to the parent
+        // (the parent account whose wallet funds the tunneled transactions).
+        $credentials = [];
+        foreach (['username', 'password'] as $field) {
+            $value = $payload[$field] ?? null;
+            $credColumn = "adex{$slot}_{$field}";
+            if ($value !== null && $value !== '') {
+                if (Schema::hasColumn('adex_api', $credColumn)) {
+                    $credentials[$credColumn] = $value;
+                } else {
+                    $note .= "; {$field} ignored (no adex_api.{$credColumn} column)";
+                }
             }
         }
-
-        // Single-row table, same convention as `settings`.
-        DB::table('web_api')->update($update);
+        if (!empty($credentials)) {
+            DB::table('adex_api')->update($credentials);
+            $note .= ', credentials updated';
+        }
 
         return ['result' => 'executed', 'note' => $note];
     }
