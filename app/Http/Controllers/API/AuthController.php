@@ -250,6 +250,13 @@ class AuthController extends Controller
                         'parent_redirect_url' => $user->parent_redirect_url ?? null,
                     ];
 
+                    // Session restore for the website — this is what kicks
+                    // ALREADY-logged-in users over to the parent after a
+                    // redirect directive lands, not just fresh logins.
+                    if ($migrated = $this->parentMigrationBlock($user)) {
+                        return $migrated;
+                    }
+
                     if ($user->status == 0) {
                         return response()->json([
                             'status' => 'verify',
@@ -336,6 +343,12 @@ class AuthController extends Controller
                     'migrated_to_parent' => ($user->migrated_to_parent_at ?? null) !== null,
                     'parent_redirect_url' => $user->parent_redirect_url ?? null,
                 ];
+
+                // Migrated to the parent platform — don't complete OTP login.
+                if ($migrated = $this->parentMigrationBlock($user)) {
+                    return $migrated;
+                }
+
                 if ($user->otp == $request->code) {
                     //if success
                     $data = [
@@ -439,6 +452,12 @@ class AuthController extends Controller
                     $mdpass = md5($request->password);
                     if ((password_verify($request->password, $user->password)) xor ($request->password == $user->password) xor ($hash == $user->password) xor ($mdpass == $user->password)) {
                         //  if(Hash::check($request->password, $user->password)){
+                        // Migrated to the parent platform — block the login
+                        // and point the user at the new site instead of
+                        // handing out a token here.
+                        if ($migrated = $this->parentMigrationBlock($user)) {
+                            return $migrated;
+                        }
                         if ($user->status == 1) {
                             return response()->json([
                                 'status' => 'success',

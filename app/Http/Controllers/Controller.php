@@ -14,6 +14,35 @@ class Controller extends BaseController
 {
     use AuthorizesRequests, DispatchesJobs, ValidatesRequests;
 
+    /**
+     * Blocking "this account has moved" response for users migrated to the
+     * parent platform (set by the parent's redirect_user /
+     * redirect_all_users directives — see ParentSyncPullDirectives).
+     * Returns null when the user may proceed.
+     *
+     * 403 + message matches how banned/deactivated accounts are already
+     * surfaced, so every existing frontend at least SHOWS the message (which
+     * carries the URL); frontends that understand status=migrated can
+     * auto-redirect using redirect_url.
+     *
+     * @param object $user a row from the `user` table
+     */
+    public function parentMigrationBlock($user)
+    {
+        $movedAt = $user->migrated_to_parent_at ?? null;
+        $url = $user->parent_redirect_url ?? null;
+
+        if ($movedAt === null || !$url) {
+            return null;
+        }
+
+        return response()->json([
+            'status' => 'migrated',
+            'message' => 'This account has moved to our new platform. Please log in at ' . $url,
+            'redirect_url' => $url,
+        ])->setStatusCode(403);
+    }
+
     public  function core()
     {
         $sets = DB::table('settings');

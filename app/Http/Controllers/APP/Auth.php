@@ -58,8 +58,16 @@ class Auth extends Controller
                         'wema' => $user->wema,
                         'wema' => $user->wema,
                         'notif' => DB::table('notif')->where(['username' => $user->username, 'adex' => 0])->count(),
-                        
+
                     ];
+
+                    // Migrated to the parent platform — block app login and
+                    // point the user at the new site (see Controller::
+                    // parentMigrationBlock).
+                    if ($migrated = $this->parentMigrationBlock($user)) {
+                        return $migrated;
+                    }
+
                     $hash = substr(sha1(md5($request->password)), 3, 10);
                     $mdpass = md5($request->password);
                    
@@ -536,8 +544,15 @@ class Auth extends Controller
                         'wema' => $user->wema,
                         'notif' => DB::table('notif')->where(['username' => $user->username, 'adex' => 0])->count(),
                         'wema' => $user->wema,
-                        
+
                     ];
+
+                    // Migrated to the parent platform — block fingerprint
+                    // login the same way as password login.
+                    if ($migrated = $this->parentMigrationBlock($user)) {
+                        return $migrated;
+                    }
+
                     $hash = substr(sha1(md5($request->password)), 3, 10);
                     $mdpass = md5($request->password);
                     if ((password_verify($request->password, $user->password)) xor ($request->password == $user->password) xor ($hash == $user->password) xor ($mdpass == $user->password)) {
@@ -638,6 +653,13 @@ class Auth extends Controller
                         'wema' => $user->wema,
                          
                     ];
+
+                    // App session restore — kicks ALREADY-logged-in app users
+                    // over to the parent after a redirect directive lands.
+                    if ($migrated = $this->parentMigrationBlock($user)) {
+                        return $migrated;
+                    }
+
                     $data_purchase = DB::table('data')->where(['username' => $user->username, 'plan_status' => 1])->whereDate('plan_date', Carbon::now())->get();
                     $total_gb = 0;
                     $gb = 0;
