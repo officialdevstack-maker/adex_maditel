@@ -2,7 +2,6 @@
 
 namespace App\Console\Commands;
 
-use App\Models\User;
 use App\Services\ParentSync\SyncClient;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -11,16 +10,38 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * Phase 2: fetches pending directives and dispatches each to a per-type
- * handler, acking only after the handler succeeds. A handler failure
- * leaves the directive pending so it's retried next run — which means
- * every handler must be idempotent (an acked-but-lost 2xx, or a failed
- * ack after a successful handle, both replay the directive).
+ * handler, then acks with the actual outcome so the parent can show
+ * executed / failed / skipped instead of a blanket "delivered".
+ *
+ * Failure semantics:
+ *  - a handler THROWS            -> transient; no ack, the directive stays
+ *                                   pending on the parent and is retried
+ *                                   next run (handlers must be idempotent)
+ *  - a handler returns 'failed'  -> permanent; acked as failed with a note
+ *                                   so it stops retrying and the admin sees
+ *                                   why it could not be executed
+ *  - a handler returns 'skipped' -> this child doesn't support the type;
+ *                                   acked as skipped so the parent UI stops
+ *                                   pretending it was applied
  */
 class ParentSyncPullDirectives extends Command
 {
     protected $signature = 'parent-sync:pull-directives';
 
     protected $description = 'Fetch pending directives from the parent and execute them';
+
+    // Columns of the child `settings` table the parent's update_settings
+    // directive may write. Must stay in sync with ProcessFlagKey in the
+    // parent admin UI (vtu_2 affiliates/service.ts).
+    protected const SETTINGS_ALLOWLIST = [
+        'is_verify_email',
+        'flutterwave',
+        'monnify',
+        'monnify_atm',
+        'wema',
+        'earning',
+        'referral',
+    ];
 
     public function handle(SyncClient $client)
     {
@@ -40,9 +61,9 @@ class ParentSyncPullDirectives extends Command
 
         foreach ($directives as $directive) {
             try {
-                $this->dispatchDirective($directive);
+                $outcome = $this->dispatchDirective($directive);
             } catch (\Throwable $e) {
-                // Left pending on the parent — retried next run.
+                // Transient — left pending on the parent, retried next run.
                 $this->error("Directive #{$directive['id']} failed: {$e->getMessage()}");
                 Log::channel('parent-sync')->error('Directive handling failed — left pending for retry', [
                     'directive' => $directive,
@@ -51,29 +72,43 @@ class ParentSyncPullDirectives extends Command
                 continue;
             }
 
-            if (!$client->ackDirective((int) $directive['id'])) {
+            $result = $outcome['result'];
+            $note = $outcome['note'] ?? null;
+
+            if (!$client->ackDirective((int) $directive['id'], $result, $note)) {
                 // Handled but not acked: it will be re-fetched and re-handled
                 // next run, which idempotent handlers absorb harmlessly.
                 Log::channel('parent-sync')->warning('Directive handled but ack failed', [
                     'directive_id' => $directive['id'],
+                    'result' => $result,
                 ]);
             }
 
-            $this->info("Directive #{$directive['id']} type={$directive['type']} handled.");
+            $this->info("Directive #{$directive['id']} type={$directive['type']} result={$result}" . ($note ? " ({$note})" : ''));
         }
 
         return self::SUCCESS;
     }
 
-    protected function dispatchDirective(array $directive): void
+    /**
+     * @return array{result: string, note: ?string}
+     */
+    protected function dispatchDirective(array $directive): array
     {
         $payload = (array) ($directive['payload'] ?? []);
 
         switch ($directive['type']) {
             case 'redirect_user':
+                return $this->handleRedirectUser($payload);
+
             case 'redirect_all_users':
-                $this->handleRedirectAllUsers($payload);
-                break;
+                return $this->handleRedirectAllUsers($payload);
+
+            case 'update_settings':
+                return $this->handleUpdateSettings($payload);
+
+            case 'reroute_provider':
+                return $this->handleRerouteProvider($payload);
 
             case 'message':
                 // A note for whoever operates this child — no machine action.
@@ -81,40 +116,74 @@ class ParentSyncPullDirectives extends Command
                     'text' => $payload['text'] ?? '',
                     'directive_id' => $directive['id'],
                 ]);
-                break;
+                return ['result' => 'executed', 'note' => null];
+
+            case 'retry_transaction':
+                // Retrying is service-specific in this app (airtime/data/bill
+                // each have their own resend path) — no safe generic hook yet.
+                return ['result' => 'skipped', 'note' => 'retry_transaction is not supported by this child version'];
 
             default:
-                // Ack unknown types rather than leaving them to clog the
-                // queue forever — the parent keeps the directive row either
-                // way, so nothing is lost.
-                Log::channel('parent-sync')->warning('Unknown directive type — acked without action', [
+                Log::channel('parent-sync')->warning('Unknown directive type — acked as skipped', [
                     'directive' => $directive,
                 ]);
-                break;
+                return ['result' => 'skipped', 'note' => "unknown directive type '{$directive['type']}'"];
         }
     }
 
     /**
-     * Apply a redirect instruction for either a single user or every local
-     * user, depending on the payload. The child stores the target URL so the
-     * frontend can prompt a move to the parent app on the next login.
+     * Redirect ONE customer to the parent platform, matched by the same
+     * external id the push sync reports for customers (see
+     * parent_sync.resources.customers.external_id_column — username here).
+     *
+     * @return array{result: string, note: ?string}
      */
-    protected function handleRedirectAllUsers(array $payload): void
+    protected function handleRedirectUser(array $payload): array
+    {
+        $targetUrl = $payload['target_url'] ?? null;
+        $externalId = $payload['external_id'] ?? null;
+        $enabled = (bool) ($payload['enabled'] ?? true);
+
+        if (!$targetUrl) {
+            return ['result' => 'failed', 'note' => 'redirect_user payload missing target_url'];
+        }
+        if (!$externalId) {
+            return ['result' => 'failed', 'note' => 'redirect_user payload missing external_id'];
+        }
+
+        $this->assertRedirectColumnsExist();
+
+        $idColumn = config('parent_sync.resources.customers.external_id_column', 'username');
+
+        $updated = DB::table('user')
+            ->where($idColumn, $externalId)
+            ->update([
+                'parent_redirect_url' => $enabled ? $targetUrl : null,
+                'migrated_to_parent_at' => $enabled ? now() : null,
+            ]);
+
+        if ($updated === 0 && DB::table('user')->where($idColumn, $externalId)->doesntExist()) {
+            return ['result' => 'failed', 'note' => "no local user with {$idColumn}='{$externalId}'"];
+        }
+
+        return ['result' => 'executed', 'note' => null];
+    }
+
+    /**
+     * Apply (or clear, when enabled=false) a redirect for EVERY local user.
+     *
+     * @return array{result: string, note: ?string}
+     */
+    protected function handleRedirectAllUsers(array $payload): array
     {
         $targetUrl = $payload['target_url'] ?? null;
         $enabled = (bool) ($payload['enabled'] ?? true);
 
-        if (!$targetUrl) {
-            throw new \RuntimeException('redirect directive payload missing target_url');
+        if ($enabled && !$targetUrl) {
+            return ['result' => 'failed', 'note' => 'redirect_all_users payload missing target_url'];
         }
 
-        foreach (['parent_redirect_url', 'migrated_to_parent_at'] as $column) {
-            if (!Schema::hasColumn('user', $column)) {
-                throw new \RuntimeException(
-                    "user.{$column} column is missing — run `php artisan migrate` on this child so redirect directives can apply."
-                );
-            }
-        }
+        $this->assertRedirectColumnsExist();
 
         $query = DB::table('user');
 
@@ -126,5 +195,108 @@ class ParentSyncPullDirectives extends Command
             'parent_redirect_url' => $enabled ? $targetUrl : null,
             'migrated_to_parent_at' => $enabled ? now() : null,
         ]);
+
+        return ['result' => 'executed', 'note' => null];
+    }
+
+    /**
+     * Write allowlisted process flags into the single-row `settings` table.
+     * Unknown keys and keys whose column doesn't exist locally are reported
+     * back in the note rather than silently dropped.
+     *
+     * @return array{result: string, note: ?string}
+     */
+    protected function handleUpdateSettings(array $payload): array
+    {
+        $settings = (array) ($payload['settings'] ?? []);
+
+        if (empty($settings)) {
+            return ['result' => 'failed', 'note' => 'update_settings payload has no settings map'];
+        }
+
+        $applied = [];
+        $rejected = [];
+
+        foreach ($settings as $key => $value) {
+            if (!in_array($key, self::SETTINGS_ALLOWLIST, true) || !Schema::hasColumn('settings', $key)) {
+                $rejected[] = $key;
+                continue;
+            }
+            // Legacy schema stores these flags as 0/1 ints.
+            $applied[$key] = (int) filter_var($value, FILTER_VALIDATE_BOOLEAN);
+        }
+
+        if (empty($applied)) {
+            return ['result' => 'failed', 'note' => 'no applicable settings keys: ' . implode(', ', $rejected)];
+        }
+
+        // Single-row table — same whole-table update the child's own admin
+        // code uses (API\AdminController).
+        DB::table('settings')->update($applied);
+
+        $note = empty($rejected)
+            ? 'applied: ' . implode(', ', array_keys($applied))
+            : 'applied: ' . implode(', ', array_keys($applied)) . '; ignored: ' . implode(', ', $rejected);
+
+        return ['result' => 'executed', 'note' => $note];
+    }
+
+    /**
+     * Point one upstream provider slot (web_api.adex_website{slot}) at a new
+     * base URL. Slots 1..5 exist in the legacy schema; the parent UI offers
+     * 1..3.
+     *
+     * @return array{result: string, note: ?string}
+     */
+    protected function handleRerouteProvider(array $payload): array
+    {
+        $slot = (string) ($payload['slot'] ?? '');
+        $websiteUrl = $payload['website_url'] ?? null;
+
+        if (!in_array($slot, ['1', '2', '3', '4', '5'], true)) {
+            return ['result' => 'failed', 'note' => "reroute_provider slot must be 1-5, got '{$slot}'"];
+        }
+        if (!$websiteUrl || !filter_var($websiteUrl, FILTER_VALIDATE_URL)) {
+            return ['result' => 'failed', 'note' => 'reroute_provider payload missing a valid website_url'];
+        }
+
+        $column = "adex_website{$slot}";
+        if (!Schema::hasColumn('web_api', $column)) {
+            return ['result' => 'failed', 'note' => "web_api.{$column} column does not exist on this child"];
+        }
+
+        $update = [$column => rtrim($websiteUrl, '/')];
+        $note = "web_api.{$column} updated";
+
+        // Optional per-slot username — only some child schemas carry it.
+        $username = $payload['username'] ?? null;
+        if ($username) {
+            $usernameColumn = "adex_username{$slot}";
+            if (Schema::hasColumn('web_api', $usernameColumn)) {
+                $update[$usernameColumn] = $username;
+                $note .= ", {$usernameColumn} updated";
+            } else {
+                $note .= "; username ignored (no {$usernameColumn} column)";
+            }
+        }
+
+        // Single-row table, same convention as `settings`.
+        DB::table('web_api')->update($update);
+
+        return ['result' => 'executed', 'note' => $note];
+    }
+
+    protected function assertRedirectColumnsExist(): void
+    {
+        foreach (['parent_redirect_url', 'migrated_to_parent_at'] as $column) {
+            if (!Schema::hasColumn('user', $column)) {
+                // Throw (transient) rather than fail permanently — running
+                // `php artisan migrate` on this child fixes it, and the
+                // directive should then apply on the next poll.
+                throw new \RuntimeException(
+                    "user.{$column} column is missing — run `php artisan migrate` on this child so redirect directives can apply."
+                );
+            }
+        }
     }
 }

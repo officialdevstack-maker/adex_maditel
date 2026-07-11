@@ -140,7 +140,7 @@ class Controller extends BaseController
             $get_user = $check_first->get()[0];
             $setting =  $this_Controller->core();
             $adex_key = $this_Controller->adex_key();
-            
+
             if(is_null($get_user->paypalmpay)){
       $response = Http::withHeaders([
           'Authorization' => 'Bearer dd31b61b02d0b91bf84dfdaae22f2fa3f2b6d57b83f4ea737a0e7f1cf81cb2ad3d15a4919ac7b38f25d117d04226acf7b15982fa8586348586a84db2',
@@ -163,7 +163,7 @@ class Controller extends BaseController
              }
          }
       }
-   } 
+   }
             if(is_null($get_user->palmpay)){
       $response = Http::withHeaders([
           'Authorization' => 'Bearer 038c598d03bacfcc134ab28a2fb99dcfe1cc9bc85f16bd51cdf1c644ac6f42351bdf77f8ea38b4f7e2d8ca3570864ec6352a84efd3942ee75e78b226',
@@ -219,7 +219,7 @@ class Controller extends BaseController
 
             $response = Http::withHeaders($headers)->post($url, $data);
             $value = $response->json();
-            
+
             file_put_contents('monnify_response.json', json_encode($value));
 
             if ($value["requestSuccessful"] ?? false) {
@@ -253,7 +253,7 @@ class Controller extends BaseController
         }
     }
 }
-          
+
         }
     }
     public function system_date()

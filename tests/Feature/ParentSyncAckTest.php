@@ -8,7 +8,7 @@ use Tests\TestCase;
 
 class ParentSyncAckTest extends TestCase
 {
-    public function test_it_sends_an_explicit_empty_body_when_acknowledging_a_directive(): void
+    public function test_it_sends_a_signed_result_body_when_acknowledging_a_directive(): void
     {
         config()->set('parent_sync', [
             'enabled' => true,
@@ -26,12 +26,22 @@ class ParentSyncAckTest extends TestCase
 
         $client = new SyncClient();
 
-        $this->assertTrue($client->ackDirective(42));
+        $this->assertTrue($client->ackDirective(42, 'failed', 'no local user'));
 
         Http::assertSent(function ($request) {
+            $expectedBody = json_encode(['result' => 'failed', 'note' => 'no local user']);
+
+            // The signature must cover the exact bytes sent, or the parent's
+            // ChildAuthenticator 401s the ack.
+            $expectedSignature = hash_hmac(
+                'sha256',
+                $request->header('X-Timestamp')[0] . '.' . $expectedBody,
+                'secret'
+            );
+
             return $request->url() === 'https://example.com/api/child/demo-child/directives/42/ack'
-                && $request->body() === ''
-                && $request->hasHeader('X-Signature')
+                && $request->body() === $expectedBody
+                && $request->header('X-Signature')[0] === $expectedSignature
                 && $request->header('Content-Type')[0] === 'application/json';
         });
     }

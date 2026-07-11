@@ -86,21 +86,27 @@ class SyncClient
         }
     }
 
-    public function ackDirective(int $id): bool
+    /**
+     * Acks a directive with its actual outcome. $result is one of
+     * 'executed' | 'failed' | 'skipped' — the parent records it verbatim so
+     * the admin UI can distinguish "applied" from "couldn't apply" instead
+     * of showing a blanket "delivered". $note carries the human-readable
+     * why/what (error reason, ignored keys, ...).
+     */
+    public function ackDirective(int $id, string $result = 'executed', ?string $note = null): bool
     {
         $config = $this->config();
         $url = rtrim($config['parent_base_url'], '/') . '/api/child/' . $config['child_slug'] . "/directives/{$id}/ack";
 
         try {
-            // Send an EXPLICIT empty body. signedRequest() signs over '' (a
-            // bodyless POST), but a plain ->post($url) lets the JSON client
-            // encode the empty payload to "[]" and send that as the body — the
-            // parent then verifies the signature against getContent() = "[]",
-            // which never matches sign(''), 401-ing every ack. withBody('')
-            // pins the sent bytes to exactly what was signed (same fix
-            // pushBatch already relies on).
-            $response = $this->signedRequest()
-                ->withBody('', 'application/json')
+            // The signature must cover the exact bytes sent — encode once and
+            // pin via withBody(), exactly like pushBatch. A plain ->post()
+            // would re-encode internally and could byte-diff from what was
+            // signed, 401-ing every ack.
+            $raw = json_encode(['result' => $result, 'note' => $note]);
+
+            $response = $this->signedRequest($raw)
+                ->withBody($raw, 'application/json')
                 ->post($url);
 
             if ($response->successful() || $response->status() === 404) {
