@@ -195,6 +195,94 @@ class ParentSyncPullDirectivesTest extends TestCase
         $this->assertStringContainsString('username ignored', $ack['note']);
     }
 
+    public function test_reroute_provider_writes_slot_credentials_to_adex_api(): void
+    {
+        Schema::create('web_api', function (Blueprint $table) {
+            $table->increments('id');
+            $table->string('adex_website1')->nullable();
+        });
+        Schema::create('adex_api', function (Blueprint $table) {
+            $table->increments('id');
+            $table->string('adex1_username')->nullable();
+            $table->string('adex1_password')->nullable();
+        });
+        DB::table('web_api')->insert(['adex_website1' => 'https://old.test']);
+        DB::table('adex_api')->insert(['adex1_username' => 'old-user', 'adex1_password' => 'old-pass']);
+
+        $this->fakeParent([[
+            'id' => 8,
+            'type' => 'reroute_provider',
+            'payload' => [
+                'slot' => '1',
+                'website_url' => 'https://parent.test',
+                'username' => 'tunnel-account',
+                'password' => 'tunnel-secret',
+            ],
+        ]]);
+
+        $this->artisan('parent-sync:pull-directives')->assertExitCode(0);
+
+        $this->assertSame('https://parent.test', DB::table('web_api')->value('adex_website1'));
+        // Credentials land in adex_api — the store DataSend/AirtimeSend
+        // actually read when building the Basic auth header.
+        $this->assertSame('tunnel-account', DB::table('adex_api')->value('adex1_username'));
+        $this->assertSame('tunnel-secret', DB::table('adex_api')->value('adex1_password'));
+
+        $ack = $this->ackBodyFor(8);
+        $this->assertSame('executed', $ack['result']);
+        $this->assertStringContainsString('credentials updated', $ack['note']);
+    }
+
+    public function test_retry_transaction_is_dispatched_to_the_retry_service(): void
+    {
+        $captured = null;
+        $this->app->instance(
+            \App\Services\ParentSync\TransactionRetryService::class,
+            new class($captured) extends \App\Services\ParentSync\TransactionRetryService {
+                private $capturedRef;
+
+                public function __construct(&$captured)
+                {
+                    $this->capturedRef = &$captured;
+                }
+
+                public function retry(string $transid): array
+                {
+                    $this->capturedRef = $transid;
+                    return ['result' => 'executed', 'note' => 'stub retry ok'];
+                }
+            }
+        );
+
+        $this->fakeParent([[
+            'id' => 9,
+            'type' => 'retry_transaction',
+            'payload' => ['external_id' => 'TX42', 'reason' => 'stuck'],
+        ]]);
+
+        $this->artisan('parent-sync:pull-directives')->assertExitCode(0);
+
+        $this->assertSame('TX42', $captured);
+        $ack = $this->ackBodyFor(9);
+        $this->assertSame('executed', $ack['result']);
+        $this->assertSame('stub retry ok', $ack['note']);
+    }
+
+    public function test_retry_transaction_without_external_id_acks_failed(): void
+    {
+        $this->fakeParent([[
+            'id' => 10,
+            'type' => 'retry_transaction',
+            'payload' => [],
+        ]]);
+
+        $this->artisan('parent-sync:pull-directives')->assertExitCode(0);
+
+        $ack = $this->ackBodyFor(10);
+        $this->assertSame('failed', $ack['result']);
+        $this->assertStringContainsString('external_id', $ack['note']);
+    }
+
     public function test_unknown_directive_type_is_acked_as_skipped(): void
     {
         $this->fakeParent([[
