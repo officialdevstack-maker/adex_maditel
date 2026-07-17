@@ -22,6 +22,7 @@ class Kernel extends ConsoleKernel
         // are safe no-ops when PARENT_SYNC_ENABLED is unset/false.
         $schedule->command('parent-sync:push')->everyFiveMinutes()->withoutOverlapping();
         $schedule->command('parent-sync:pull-directives')->everyFiveMinutes()->withoutOverlapping();
+        $schedule->command('parent-sync:pull-credit-events')->everyFiveMinutes()->withoutOverlapping();
     }
 
     /**

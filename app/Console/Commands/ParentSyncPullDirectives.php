@@ -110,6 +110,9 @@ class ParentSyncPullDirectives extends Command
             case 'reroute_provider':
                 return $this->handleRerouteProvider($payload);
 
+            case 'set_funding_mode':
+                return $this->handleSetFundingMode($payload);
+
             case 'message':
                 // A note for whoever operates this child — no machine action.
                 Log::channel('parent-sync')->info('Message from parent', [
@@ -254,6 +257,29 @@ class ParentSyncPullDirectives extends Command
      *
      * @return array{result: string, note: ?string}
      */
+    /**
+     * Turn parent-managed funding on or off for this child. When on, this child
+     * asks the parent to issue its customers' virtual accounts (see
+     * ParentFundingService) instead of using its own payment providers.
+     *
+     * @return array{result: string, note: ?string}
+     */
+    protected function handleSetFundingMode(array $payload): array
+    {
+        if (!Schema::hasTable('parent_funding_config')) {
+            return ['result' => 'failed', 'note' => 'parent_funding_config table missing — run migrations on this child'];
+        }
+
+        $aggregate = (bool) ($payload['aggregate'] ?? false);
+        $parentUrl = $payload['parent_url'] ?? config('parent_sync.parent_base_url');
+
+        app(\App\Services\ParentSync\ParentFundingService::class)->setMode($aggregate, $parentUrl);
+
+        return ['result' => 'executed', 'note' => $aggregate
+            ? 'funding aggregation enabled'
+            : 'funding aggregation disabled'];
+    }
+
     protected function handleRerouteProvider(array $payload): array
     {
         $slot = (string) ($payload['slot'] ?? '');

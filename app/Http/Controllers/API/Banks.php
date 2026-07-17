@@ -24,6 +24,20 @@ if (in_array($origin, $allowedOrigins) || env('ADEX_DEVICE_KEY') === $authorizat
               ->orWhere('id', $this->verifyapptoken($request->id));
            })->first();
 
+            // Parent-managed funding: when the parent aggregates this child's
+            // funding and the customer has no parent-issued accounts yet, ask
+            // the parent to issue them now and reload so they show below. This
+            // is the on-demand fallback to the login/register generation.
+            if (!empty($auth_user)) {
+                $funding = app(\App\Services\ParentSync\ParentFundingService::class);
+                if ($funding->isEnabled()
+                    && empty($auth_user->paypalmpay) && empty($auth_user->rolex)
+                    && empty($auth_user->wema) && empty($auth_user->sterlen)) {
+                    $funding->ensureAccounts($auth_user);
+                    $auth_user = DB::table('user')->where('id', $auth_user->id)->first();
+                }
+            }
+
             $setting = DB::table('settings')->first();
             $banks_array = [];
             

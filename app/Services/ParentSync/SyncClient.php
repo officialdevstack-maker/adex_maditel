@@ -129,6 +129,85 @@ class SyncClient
         }
     }
 
+    /**
+     * Ask the parent to create (or return the existing) virtual accounts for a
+     * child customer. Returns the list of bank accounts the parent issued, or
+     * [] on failure. $customer requires external_customer_id, email, name;
+     * optional phone; regenerate=true replaces any prior accounts (login/register).
+     */
+    public function requestVirtualAccounts(array $customer): array
+    {
+        $config = $this->config();
+        $url = rtrim($config['parent_base_url'], '/') . '/api/child/' . $config['child_slug'] . '/virtual-accounts';
+
+        try {
+            $raw = json_encode($customer);
+            $response = $this->signedRequest($raw)
+                ->withBody($raw, 'application/json')
+                ->post($url);
+
+            if (!$response->successful()) {
+                Log::channel('parent-sync')->warning('Request virtual accounts failed', [
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                ]);
+                return [];
+            }
+
+            return $response->json('data.accounts', []);
+        } catch (\Throwable $e) {
+            Log::channel('parent-sync')->error('Request virtual accounts error', ['error' => $e->getMessage()]);
+            return [];
+        }
+    }
+
+    /** Pending credit events the parent raised when this child's accounts were funded. */
+    public function fetchCreditEvents(): array
+    {
+        $config = $this->config();
+        $url = rtrim($config['parent_base_url'], '/') . '/api/child/' . $config['child_slug'] . '/credit-events';
+
+        try {
+            $response = $this->signedRequest()->get($url);
+            if (!$response->successful()) {
+                Log::channel('parent-sync')->warning('Fetch credit events failed', ['status' => $response->status()]);
+                return [];
+            }
+            return $response->json('data', []);
+        } catch (\Throwable $e) {
+            Log::channel('parent-sync')->error('Fetch credit events error', ['error' => $e->getMessage()]);
+            return [];
+        }
+    }
+
+    /** Confirm a credit event was applied ('credited') or couldn't be ('failed'). */
+    public function ackCreditEvent(int $id, string $result = 'credited', ?string $note = null): bool
+    {
+        $config = $this->config();
+        $url = rtrim($config['parent_base_url'], '/') . '/api/child/' . $config['child_slug'] . "/credit-events/{$id}/ack";
+
+        try {
+            $raw = json_encode(['result' => $result, 'note' => $note]);
+            $response = $this->signedRequest($raw)
+                ->withBody($raw, 'application/json')
+                ->post($url);
+
+            if ($response->successful() || $response->status() === 404) {
+                return true;
+            }
+
+            Log::channel('parent-sync')->warning('Ack credit event rejected by parent', [
+                'credit_event_id' => $id,
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+            return false;
+        } catch (\Throwable $e) {
+            Log::channel('parent-sync')->error('Ack credit event error', ['error' => $e->getMessage(), 'credit_event_id' => $id]);
+            return false;
+        }
+    }
+
     // $raw must be the exact bytes of the request body (empty string for
     // GETs / bodyless POSTs like ackDirective) — must match what the
     // parent's ChildAuthenticator::verify() reads via $request->getContent().
